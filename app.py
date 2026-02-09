@@ -4,11 +4,13 @@ import uuid
 from datetime import datetime
 import os
 import json
-import openai
+from openai import OpenAI
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 # --- CONFIG ---
 API_URL = "https://script.google.com/macros/s/AKfycbyhSbiNnsZv3Y3K_kJL4gF87tt5dl4We38p72-LOp2zdLnEG_2mnSXmyuwuC3kW_5qi/exec"
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(page_title="AI Client Intake Assistant")
 st.title("💬 Talk to Our Assistant")
