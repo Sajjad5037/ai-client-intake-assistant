@@ -22,7 +22,60 @@ if "messages" not in st.session_state:
 if "lead_saved" not in st.session_state:
     st.session_state.lead_saved = False
 
+def extract_lead_data(messages):
+    extraction_prompt = (
+        "From the following conversation, extract structured lead information.\n\n"
+        "Return ONLY valid JSON. Do not include explanations, markdown, or extra text.\n\n"
+        "Required JSON fields:\n"
+        "- intent (sales/support/other)\n"
+        "- service_interest\n"
+        "- budget_range (low/medium/high/unknown)\n"
+        "- timeline (urgent/soon/flexible/unknown)\n"
+        "- urgency_level (low/medium/high)\n"
+        "- lead_score (0-100 integer)\n"
+        "- lead_temperature (hot/warm/cold)\n"
+        "- ai_summary (1-2 sentences)\n"
+        "- suggested_action\n\n"
+        "Conversation:\n"
+        f"{json.dumps(messages, indent=2)}"
+    )
 
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": "You are a strict JSON generator. Output ONLY valid JSON."
+            },
+            {
+                "role": "user",
+                "content": extraction_prompt
+            }
+        ],
+        temperature=0
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    # Remove markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.replace("```json", "").replace("```", "").strip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Fallback: return safe defaults instead of crashing
+        return {
+            "intent": "sales",
+            "service_interest": "Website redesign",
+            "budget_range": "unknown",
+            "timeline": "unknown",
+            "urgency_level": "medium",
+            "lead_score": 50,
+            "lead_temperature": "warm",
+            "ai_summary": "Lead captured via chatbot, but some details could not be confidently extracted.",
+            "suggested_action": "Review conversation manually"
+        }
 # --- AI CHAT REPLY ---
 def generate_ai_reply(messages):
     system_prompt = (
@@ -50,7 +103,8 @@ def generate_ai_reply(messages):
 def extract_lead_data(messages):
     extraction_prompt = (
         "From the following conversation, extract structured lead information.\n\n"
-        "Return ONLY valid JSON with these fields:\n"
+        "Return ONLY valid JSON. Do not include explanations, markdown, or extra text.\n\n"
+        "Required JSON fields:\n"
         "- intent (sales/support/other)\n"
         "- service_interest\n"
         "- budget_range (low/medium/high/unknown)\n"
@@ -67,13 +121,35 @@ def extract_lead_data(messages):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are a precise data extraction engine."},
-            {"role": "user", "content": extraction_prompt},
+            {
+                "role": "system",
+                "content": "You are a strict JSON generator. Output ONLY valid JSON."
+            },
+            {
+                "role": "user",
+                "content": extraction_prompt
+            }
         ],
         temperature=0
     )
 
-    return json.loads(response.choices[0].message.content)
+    raw = response.choices[0].message.content
+
+    try:
+        return extract_json_from_text(raw)
+    except ValueError:
+        # Graceful fallback (never crash UX)
+        return {
+            "intent": "sales",
+            "service_interest": "Website redesign",
+            "budget_range": "unknown",
+            "timeline": "unknown",
+            "urgency_level": "medium",
+            "lead_score": 50,
+            "lead_temperature": "warm",
+            "ai_summary": "Lead captured, but some details could not be confidently extracted.",
+            "suggested_action": "Review conversation manually"
+        }
 
 
 # --- DISPLAY CHAT HISTORY ---
