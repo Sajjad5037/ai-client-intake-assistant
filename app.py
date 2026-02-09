@@ -6,61 +6,91 @@ import os
 import json
 from openai import OpenAI
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-
-# --- CONFIG ---
+# ================= CONFIG =================
 API_URL = "https://script.google.com/macros/s/AKfycbyhSbiNnsZv3Y3K_kJL4gF87tt5dl4We38p72-LOp2zdLnEG_2mnSXmyuwuC3kW_5qi/exec"
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 st.set_page_config(page_title="AI Client Intake Assistant")
 st.title("💬 Talk to Our Assistant")
 
-# --- SESSION STATE ---
+
+# ================= SESSION STATE =================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "lead_saved" not in st.session_state:
     st.session_state.lead_saved = False
-# --- AI EXTRACTION ---
+
+
+# ================= JSON UTILS =================
+def extract_json_from_text(text: str) -> dict:
+    if not text:
+        raise ValueError("Empty AI response")
+
+    cleaned = text.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end != -1:
+            return json.loads(cleaned[start:end + 1])
+
+    raise ValueError("Could not extract valid JSON")
+
+
+# ================= AI CHAT =================
+def generate_ai_reply(messages):
+    system_prompt = (
+        "You are a friendly AI assistant for a digital agency. "
+        "Ask concise follow-up questions to understand the visitor’s needs, "
+        "timeline, and budget. Keep responses professional and conversational."
+    )
+
+    chat = [{"role": "system", "content": system_prompt}] + messages
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=chat,
+        temperature=0.4
+    )
+
+    return response.choices[0].message.content
+
+
+# ================= AI EXTRACTION =================
 def extract_lead_data(messages):
-    extraction_prompt = (
+    prompt = (
         "From the following conversation, extract structured lead information.\n\n"
-        "Return ONLY valid JSON. Do not include explanations, markdown, or extra text.\n\n"
-        "Required JSON fields:\n"
+        "Return ONLY valid JSON with the following fields:\n"
         "- intent (sales/support/other)\n"
         "- service_interest\n"
         "- budget_range (low/medium/high/unknown)\n"
         "- timeline (urgent/soon/flexible/unknown)\n"
         "- urgency_level (low/medium/high)\n"
-        "- lead_score (0-100 integer)\n"
+        "- lead_score (0-100)\n"
         "- lead_temperature (hot/warm/cold)\n"
         "- ai_summary (1-2 sentences)\n"
         "- suggested_action\n\n"
-        "Conversation:\n"
         f"{json.dumps(messages, indent=2)}"
     )
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {
-                "role": "system",
-                "content": "You are a strict JSON generator. Output ONLY valid JSON."
-            },
-            {
-                "role": "user",
-                "content": extraction_prompt
-            }
+            {"role": "system", "content": "You output strict JSON only."},
+            {"role": "user", "content": prompt},
         ],
         temperature=0
     )
 
-    raw = response.choices[0].message.content
-
     try:
-        return extract_json_from_text(raw)
-    except ValueError:
-        # Graceful fallback (never crash UX)
+        return extract_json_from_text(response.choices[0].message.content)
+    except Exception:
         return {
             "intent": "sales",
             "service_interest": "Website redesign",
@@ -69,18 +99,20 @@ def extract_lead_data(messages):
             "urgency_level": "medium",
             "lead_score": 50,
             "lead_temperature": "warm",
-            "ai_summary": "Lead captured, but some details could not be confidently extracted.",
+            "ai_summary": "Lead captured via chatbot, but details are incomplete.",
             "suggested_action": "Review conversation manually"
         }
 
 
+# ================= AUTO SAVE =================
 def auto_save_lead(messages):
+    if st.session_state.lead_saved:
+        return
+
     extracted = extract_lead_data(messages)
 
-    # Auto-save condition (Minimum Viable Lead)
     if (
-        not st.session_state.lead_saved
-        and extracted["intent"] == "sales"
+        extracted["intent"] == "sales"
         and extracted["service_interest"]
         and extracted["lead_score"] >= 60
     ):
@@ -88,101 +120,36 @@ def auto_save_lead(messages):
             "created_at": datetime.utcnow().isoformat(),
             "lead_id": str(uuid.uuid4()),
             "source": "streamlit-chat",
-            "intent": extracted["intent"],
-            "service_interest": extracted["service_interest"],
-            "budget_range": extracted["budget_range"],
-            "timeline": extracted["timeline"],
-            "urgency_level": extracted["urgency_level"],
-            "lead_score": extracted["lead_score"],
-            "lead_temperature": extracted["lead_temperature"],
-            "suggested_action": extracted["suggested_action"],
-            "ai_summary": extracted["ai_summary"],
+            **extracted,
             "conversation_log": messages,
         }
 
         response = requests.post(
             f"{API_URL}?action=saveLead",
             json=payload,
-            timeout=10,
+            timeout=10
         )
 
         if response.status_code == 200:
             st.session_state.lead_saved = True
 
-def extract_json_from_text(text: str) -> dict:
-    if not text:
-        raise ValueError("Empty AI response")
 
-    cleaned = text.strip()
-
-    # Remove markdown fences
-    if cleaned.startswith("```"):
-        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
-
-    # Try direct JSON parse
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Fallback: extract JSON substring
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-
-    if start != -1 and end != -1:
-        try:
-            return json.loads(cleaned[start:end + 1])
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError("Could not extract valid JSON from AI output")
-
-# --- AI CHAT REPLY ---
-def generate_ai_reply(messages):
-    system_prompt = (
-        "You are a friendly AI assistant for a digital agency. "
-        "Your job is to understand what the visitor needs, ask concise follow-up questions, "
-        "and gently gather information about their project, timeline, and budget. "
-        "Be professional, warm, and conversational."
-    )
-
-    chat = [{"role": "system", "content": system_prompt}]
-    chat.extend(messages)
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=chat,
-        temperature=0.4
-    )
-    
-    return response.choices[0].message.content
-
-
-    
-
-
-# --- DISPLAY CHAT HISTORY ---
+# ================= UI =================
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-
-# --- USER INPUT ---
 user_input = st.chat_input("How can we help you today?")
 
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
-
     with st.chat_message("user"):
         st.markdown(user_input)
 
     ai_reply = generate_ai_reply(st.session_state.messages)
-
     st.session_state.messages.append({"role": "assistant", "content": ai_reply})
-
     with st.chat_message("assistant"):
         st.markdown(ai_reply)
-    # Attempt auto-save silently
+
+    # Silent auto-save check
     auto_save_lead(st.session_state.messages)
-
-
