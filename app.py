@@ -115,7 +115,12 @@ def auto_save_lead(messages):
         extracted["intent"] == "sales"
         and extracted["service_interest"]
         and extracted["lead_score"] >= 60
+        and (
+            extracted["budget_range"] != "unknown"
+            or extracted["timeline"] != "unknown"
+        )
     ):
+
         payload = {
             "created_at": datetime.utcnow().isoformat(),
             "lead_id": str(uuid.uuid4()),
