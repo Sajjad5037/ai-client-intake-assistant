@@ -21,6 +21,33 @@ if "messages" not in st.session_state:
 
 if "lead_saved" not in st.session_state:
     st.session_state.lead_saved = False
+def extract_json_from_text(text: str) -> dict:
+    if not text:
+        raise ValueError("Empty AI response")
+
+    cleaned = text.strip()
+
+    # Remove markdown fences
+    if cleaned.startswith("```"):
+        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    # Try direct JSON parse
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: extract JSON substring
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+
+    if start != -1 and end != -1:
+        try:
+            return json.loads(cleaned[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError("Could not extract valid JSON from AI output")
 
 def extract_lead_data(messages):
     extraction_prompt = (
