@@ -133,6 +133,12 @@ def auto_save_lead(messages):
         if response.status_code == 200:
             st.session_state.lead_saved = True
 
+        # Show confirmation in chat (TEMP – for dev/demo)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "✅ Thanks! Your request has been saved and our team will be in touch shortly."
+        })
+
 
 # ================= UI =================
 for msg in st.session_state.messages:
