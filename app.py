@@ -21,57 +21,6 @@ if "messages" not in st.session_state:
 
 if "lead_saved" not in st.session_state:
     st.session_state.lead_saved = False
-def extract_json_from_text(text: str) -> dict:
-    if not text:
-        raise ValueError("Empty AI response")
-
-    cleaned = text.strip()
-
-    # Remove markdown fences
-    if cleaned.startswith("```"):
-        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
-
-    # Try direct JSON parse
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Fallback: extract JSON substring
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-
-    if start != -1 and end != -1:
-        try:
-            return json.loads(cleaned[start:end + 1])
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError("Could not extract valid JSON from AI output")
-
-# --- AI CHAT REPLY ---
-def generate_ai_reply(messages):
-    system_prompt = (
-        "You are a friendly AI assistant for a digital agency. "
-        "Your job is to understand what the visitor needs, ask concise follow-up questions, "
-        "and gently gather information about their project, timeline, and budget. "
-        "Be professional, warm, and conversational."
-    )
-
-    chat = [{"role": "system", "content": system_prompt}]
-    chat.extend(messages)
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=chat,
-        temperature=0.4
-    )
-    
-    return response.choices[0].message.content
-
-
-    
-
 # --- AI EXTRACTION ---
 def extract_lead_data(messages):
     extraction_prompt = (
@@ -125,6 +74,93 @@ def extract_lead_data(messages):
         }
 
 
+def auto_save_lead(messages):
+    extracted = extract_lead_data(messages)
+
+    # Auto-save condition (Minimum Viable Lead)
+    if (
+        not st.session_state.lead_saved
+        and extracted["intent"] == "sales"
+        and extracted["service_interest"]
+        and extracted["lead_score"] >= 60
+    ):
+        payload = {
+            "created_at": datetime.utcnow().isoformat(),
+            "lead_id": str(uuid.uuid4()),
+            "source": "streamlit-chat",
+            "intent": extracted["intent"],
+            "service_interest": extracted["service_interest"],
+            "budget_range": extracted["budget_range"],
+            "timeline": extracted["timeline"],
+            "urgency_level": extracted["urgency_level"],
+            "lead_score": extracted["lead_score"],
+            "lead_temperature": extracted["lead_temperature"],
+            "suggested_action": extracted["suggested_action"],
+            "ai_summary": extracted["ai_summary"],
+            "conversation_log": messages,
+        }
+
+        response = requests.post(
+            f"{API_URL}?action=saveLead",
+            json=payload,
+            timeout=10,
+        )
+
+        if response.status_code == 200:
+            st.session_state.lead_saved = True
+
+def extract_json_from_text(text: str) -> dict:
+    if not text:
+        raise ValueError("Empty AI response")
+
+    cleaned = text.strip()
+
+    # Remove markdown fences
+    if cleaned.startswith("```"):
+        cleaned = cleaned.replace("```json", "").replace("```", "").strip()
+
+    # Try direct JSON parse
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Fallback: extract JSON substring
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+
+    if start != -1 and end != -1:
+        try:
+            return json.loads(cleaned[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError("Could not extract valid JSON from AI output")
+
+# --- AI CHAT REPLY ---
+def generate_ai_reply(messages):
+    system_prompt = (
+        "You are a friendly AI assistant for a digital agency. "
+        "Your job is to understand what the visitor needs, ask concise follow-up questions, "
+        "and gently gather information about their project, timeline, and budget. "
+        "Be professional, warm, and conversational."
+    )
+
+    chat = [{"role": "system", "content": system_prompt}]
+    chat.extend(messages)
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=chat,
+        temperature=0.4
+    )
+    
+    return response.choices[0].message.content
+
+
+    
+
+
 # --- DISPLAY CHAT HISTORY ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -146,38 +182,7 @@ if user_input:
 
     with st.chat_message("assistant"):
         st.markdown(ai_reply)
+    # Attempt auto-save silently
+    auto_save_lead(st.session_state.messages)
 
 
-# --- SAVE LEAD ---
-if st.session_state.messages and not st.session_state.lead_saved:
-    if st.button("Finish & Send to Team"):
-        with st.spinner("Analyzing your request..."):
-            extracted = extract_lead_data(st.session_state.messages)
-
-            payload = {
-                "created_at": datetime.utcnow().isoformat(),
-                "lead_id": str(uuid.uuid4()),
-                "source": "streamlit-chat",
-                "intent": extracted["intent"],
-                "service_interest": extracted["service_interest"],
-                "budget_range": extracted["budget_range"],
-                "timeline": extracted["timeline"],
-                "urgency_level": extracted["urgency_level"],
-                "lead_score": extracted["lead_score"],
-                "lead_temperature": extracted["lead_temperature"],
-                "suggested_action": extracted["suggested_action"],
-                "ai_summary": extracted["ai_summary"],
-                "conversation_log": st.session_state.messages,
-            }
-
-            response = requests.post(
-                f"{API_URL}?action=saveLead",
-                json=payload,
-                timeout=10,
-            )
-
-        if response.status_code == 200:
-            st.success("Thanks! Our team will get back to you shortly.")
-            st.session_state.lead_saved = True
-        else:
-            st.error("Something went wrong while saving your request.")
